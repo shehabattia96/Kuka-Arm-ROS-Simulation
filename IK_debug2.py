@@ -57,18 +57,17 @@ def test_code(test_case):
             self.poses = [comb]
 
     req = Pose(comb)
-    ### Begin pose estimation by calculating transformation matricies from DH-Params
     # Create symbols
     d = symbols('d1:8') #link offsets
     a = symbols('a0:7') #link lengths
     alpha = symbols('alpha0:7') #twist angles
     theta = symbols('theta1:8') #joint angles
-    num_links = 7 #includes EE
     #Vals from kr210.urdf.xacro
-    d_vals = [0.75, 0,0,1.5,0,0,0.303] #link offsets
-    a_vals = [0,0.35,1.25,-0.054,0,0,0] #link lengths
-    alpha_vals = [0, -pi/2.0,0,-pi/2.0,pi/2.0,-pi/2.0,0] #twist angles
-    theta_vals = [0, -pi/2.0,0,0,0,0,-theta[6]] #joint angles (usually q, I'm calling it theta)
+    num_links = 7
+    d_vals = [0.75, 0,0,1.5,0,0,0.303]
+    a_vals = [0,0.35,1.25,-0.054,0,0,0]
+    alpha_vals = [0, -pi/2,0,-pi/2,pi/2,-pi/2,0]
+    theta_vals = [0, -pi/2,0,0,0,0,-theta[6]]
     theta_vals = [theta[i] + theta_vals[i] for i in range(0,num_links) ] #Add symbolic theta to each rotation
     #Combine DH-Parameters into one dictionary:
     dhParams = {}
@@ -76,7 +75,8 @@ def test_code(test_case):
     dhParams.update(dict(zip(d,d_vals)))
     dhParams.update(dict(zip(alpha,alpha_vals)))
     dhParams.update(dict(zip(theta,theta_vals)))
-    
+    print(dhParams)
+
     # Define Modified DH Transformation matrix
     def TF_Matrix(alpha_tfm,a_tfm,d_tfm,theta_tfm): #references Kinematics walkthrough video
         transformMatrix = Matrix([ #Create a symbolic matrix to transform adjacent joints - taken from lesson.
@@ -93,10 +93,11 @@ def test_code(test_case):
     transformation_between_baselink_and_endEffector = 1 #initialize this with 1
     for tfm in transformMatricies: #Multiply all the matricies between base link and end effector to get final transform matrix:
         transformation_between_baselink_and_endEffector = transformation_between_baselink_and_endEffector * tfm
-    print("Finished calculating DH-Params and transformations")
 
-    ### Compensate for rotation discrepancy between DH parameters and Gazebo
+
+    # Compensate for rotation discrepancy between DH parameters and Gazebo
     r, p, y = symbols('r p y')
+
     #Textbook X,Y,Z 3D transformation matricies:
     rot_x = Matrix([
         [1, 0, 0],
@@ -118,14 +119,22 @@ def test_code(test_case):
 
     rot_endEffector_sym = rot_x * rot_y * rot_z
 
+    O = [
+        [0, 0, 0.33],
+        [0.35, 0, 0.75],
+        [0.35, 0, 2],
+        [1.31, 0, 1.946],
+        [1.85, 0, 1.946],
+        [2.043, 0, 1.946],
+        [2.153, 0, 1.946],
+    ]
 
-    with open('./poses_log.txt','a') as f:
-        print >> f,str(time())
-        for pose in req.poses:
-            print >> f, pose.position.x, pose.position.y, pose.position.z, pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w
+    start_time = time()
+    
+    ########################################################################################
+    ## 
 
-
-    ### Begin pose estimation 
+    ## Insert IK code here!
     px = req.poses[x].position.x
     py = req.poses[x].position.y
     pz = req.poses[x].position.z
@@ -134,67 +143,68 @@ def test_code(test_case):
         [req.poses[x].orientation.x, req.poses[x].orientation.y,
             req.poses[x].orientation.z, req.poses[x].orientation.w])
 
+    # theta1 = 0
+    # theta2 = 0
+    # theta3 = 0
+    # theta4 = 0
+    # theta5 = 0
+    # theta6 = 0
 
-    start_time = time()
-    print("Received pose:", px, py, pz)
-    #Correct for the rotation error between URDF file and DH-Params:
-    rot_error = rot_z.copy().subs(y, radians(90)) * rot_y.copy().subs(p, radians(-90)) * rot_x.copy().subs(r, radians(90)) 
-    
+    # #Correct for the rotation error between URDF file and DH-Params:
+    rot_error = rot_z.copy().subs(y, pi) * rot_y.copy().subs(p, -pi/2)
+
     rot_endEffector = rot_endEffector_sym.copy() * rot_error
 
     rot_endEffector = rot_endEffector.subs({'r':roll, 'p':pitch,'y':yaw})
 
-    #End effector position and wrist center:
+    # #End effector position and wrist center:
     endEffector = Matrix([
         [px], [py], [pz]
     ])
-
     #Wrist center is the homogenous transform between base and end effector, end effector position - displacement * rotation of effector about z-axis.
-    # endEffector =  rot_endEffector * endEffector
-    print("Calculated wrist center")
-    posedEE_on_wristCenter = (0.303 * rot_endEffector) #Calculate the rotation of ee on wrist center 
-    wristCenter = endEffector
-    #Translate wrist center after rotation of EE:
-    wristCenter[0] = wristCenter[0] - posedEE_on_wristCenter[0,2]
-    wristCenter[1] = wristCenter[1] - posedEE_on_wristCenter[0,1]
-    wristCenter[2] = wristCenter[2] + posedEE_on_wristCenter[0,0]
+    wristCenter = endEffector - 0.303 * rot_endEffector[:,2]
+    print("endEffector", endEffector)
+    print("wrist center", wristCenter)
+
+    theta6 = atan2(wristCenter[2]-O[6][2],wristCenter[1]-O[6][1])
+    O[5] = rot_x.copy().subs(r,theta6)*Matrix(O[5])
+    theta5 = atan2(O[5][2]-O[4][2],O[5][0]-O[4][0])
+
+    O[4] = rot_y.copy().subs(p,theta5)*Matrix(O[4])
+    theta4 = atan2(O[4][2]-O[3][2],O[4][1]-O[3][1]) 
     
-    #theta 1 is the joint angle about the z-axis from base link to WC
+    O[3] = rot_x.copy().subs(r,theta4)*Matrix(O[3])
+    theta3 = atan2(O[3][2]-O[2][2],O[3][0]-O[2][0])
+    
+    O[2] = rot_y.copy().subs(p,theta3)*Matrix(O[2])
+    theta2 = atan2(O[2][2]-O[1][2],O[2][0]-O[1][0])
+    
+    O[1] = rot_y.copy().subs(p,theta2)*Matrix(O[1])
+    theta1 = atan2(O[1][1]-O[0][1],O[1][0]-O[0][0])
+    
+    O[0] = rot_z.copy().subs(y,theta1)*Matrix(O[0])
+
+    print("O: ", O) 
+    #theta 1 is the joint angle about the z-axis from gripper to shares O4,5,6
     theta1 = atan2(wristCenter[1],wristCenter[0])
-    print("Theta 1 calculated") 
 
-    #From IK simplified drawing of links 0-3 and 3-6:
-    side_a = 1.5
-    side_b = sqrt(pow((sqrt(wristCenter[0]*wristCenter[0] + wristCenter[1]*wristCenter[1])-0.35),2)+pow((wristCenter[2]-0.75),2))
-    side_c = 1.25
+    # #From IK simplified drawing of links 0-3 and 3-6:
+    # side_a = 1.5
+    # side_b = sqrt(pow((sqrt(wristCenter[0]*wristCenter[0] + wristCenter[1]*wristCenter[1])-0.35),2)+pow((wristCenter[2]-0.75),2))
+    # side_c = 1.25
 
-    angle_a = acos((side_b * side_b + side_c*side_c - side_a*side_a)/(2* side_b * side_c))
-    angle_b = acos((side_a * side_a + side_c*side_c - side_b*side_b)/(2* side_a * side_c))
-    angle_c = acos((side_b * side_b + side_a*side_a - side_c*side_c)/(2* side_b * side_a))
-    theta2 = pi/2 - angle_a - atan2(wristCenter[2]-0.75, sqrt(wristCenter[0]*wristCenter[0]+wristCenter[1]*wristCenter[1])-0.35)
-    print("Theta 2 calculated")
-    theta3 = pi/2 - (angle_b +0.036)
-    print("Theta 3 calculated")
+    # angle_a = acos((side_b * side_b + side_c*side_c - side_a*side_a)/(2* side_b * side_c))
+    # angle_b = acos((side_a * side_a + side_c*side_c - side_b*side_b)/(2* side_a * side_c))
+    # angle_c = acos((side_b * side_b + side_a*side_a - side_c*side_c)/(2* side_b * side_a))
+    # theta2 = pi/2 - angle_a - atan2(wristCenter[2]-0.75, sqrt(wristCenter[0]*wristCenter[0]+wristCenter[1]*wristCenter[1])-0.35)
+    # theta3 = pi/2 - (angle_b +0.036)
 
-    R0_3 = transformMatricies[0]*transformMatricies[1]*transformMatricies[2]
-    R0_3 = R0_3.evalf(subs={theta[0]: theta1,theta[1]: theta2,theta[2]: theta3})
-    R3_6 = R0_3.inv("LU")[0:3,0:3] * rot_endEffector
-    # print("posedEE_on_wristCenter",posedEE_on_wristCenter)
-
-    theta4 = atan2(R3_6[2,2], -R3_6[0,2])
-    print("Theta 4 calculated")
-    theta5 = atan2(sqrt(R3_6[0,2]*R3_6[0,2]+R3_6[2,2]*R3_6[2,2]), R3_6[1,2])
-    print("Theta 5 calculated")
-    theta6 = atan2(-R3_6[1,1],R3_6[1,0])
-    print("Theta 6 calculated")
-    # theta4 = pi/2 +1
-    # theta5 = 0
-    # theta6 = 0
-
-
-    ## Error analysis
-    print ("\nTotal run time to calculate joint angles from pose is %04.4f seconds" % (time()-start_time))
-
+    # R0_3 = transformMatricies[0][0:3,0:3]*transformMatricies[1][0:3,0:3]*transformMatricies[2][0:3,0:3]
+    # R0_3 = R0_3.evalf(subs={theta[0]: theta1,theta[1]: theta2,theta[2]: theta3})
+    # R3_6 = R0_3.inv("LU") * rot_endEffector
+    # theta4 = atan2(R3_6[2,2], -R3_6[0,2])
+    # theta5 = atan2(sqrt(R3_6[0,2]*R3_6[0,2]+R3_6[2,2]*R3_6[2,2]), R3_6[1,2])
+    # theta6 = atan2(-R3_6[1,1],R3_6[1,0])
 
     ## 
     ########################################################################################
@@ -208,12 +218,17 @@ def test_code(test_case):
     ## End your code input for forward kinematics here!
     ########################################################################################
 
+    ## Error analysis
+    print ("\nTotal run time to calculate joint angles from pose is %04.4f seconds" % (time()-start_time))
+
     ## For error analysis please set the following variables of your WC location and EE location in the format of [x,y,z]
     theta_dict = dict(zip(theta,[theta1,theta2,theta3,theta4,theta5,theta6]))
-    print("thetas",theta_dict)
+    print(theta_dict)
     FK = transformation_between_baselink_and_endEffector.evalf(subs = theta_dict )
     your_wc = wristCenter
     your_ee = [FK[0,3],FK[1,3],FK[2,3]]
+    print("FK")
+    print(FK)
     ########################################################################################
 
     # Find WC error
@@ -261,6 +276,6 @@ def test_code(test_case):
 
 if __name__ == "__main__":
     # Change test case number for different scenarios
-    test_case_number = 2
+    test_case_number = 1
 
     test_code(test_cases[test_case_number])
